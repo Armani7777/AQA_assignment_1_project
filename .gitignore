@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+venv/
+.env
+.env.*
+
+# Django / SQLite
+db.sqlite3
+data/db.sqlite3
+media/
+staticfiles/
+
+# Logs
+*.log
+*.pid
+
+# Node / Frontend
+node_modules/
+dist/
+npm-debug.log*
+yarn.lock
+pnpm-lock.yaml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
