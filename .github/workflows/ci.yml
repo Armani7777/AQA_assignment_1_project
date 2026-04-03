@@ -47,3 +47,46 @@ jobs:
         run: npm install
       - name: Build
         run: npm run build
+
+  api-tests:
+    name: API E2E tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      # optional: provide network for curl localhost
+      mysql:
+        image: alpine:3.18
+        options: >-
+          --health-cmd="exit 0"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-html requests
+      - name: Migrate and seed
+        working-directory: backend
+        run: |
+          python manage.py migrate
+          python manage.py seed
+      - name: Start Django server
+        working-directory: backend
+        run: |
+          nohup python manage.py runserver 0.0.0.0:8000 >/tmp/django.log 2>&1 &
+          for i in {1..30}; do
+            if curl -sSf http://127.0.0.1:8000/api/ >/dev/null; then
+              echo "API is up"; break
+            fi
+            sleep 2
+          done
+      - name: Run pytest against live API
+        run: |
+          pytest shopmarket_tests.py -v
