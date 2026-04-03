@@ -1,6 +1,7 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import CustomUser
@@ -28,10 +29,10 @@ class LoginSerializer(serializers.Serializer):
         try:
             user = CustomUser.objects.get(email=email)
         except CustomUser.DoesNotExist as exc:
-            raise serializers.ValidationError("Invalid credentials.") from exc
+            raise AuthenticationFailed("Invalid credentials.") from exc
         auth_user = authenticate(username=user.username, password=password)
         if not auth_user:
-            raise serializers.ValidationError("Invalid credentials.")
+            raise AuthenticationFailed("Invalid credentials.")
         refresh = RefreshToken.for_user(auth_user)
         return {"access": str(refresh.access_token), "refresh": str(refresh)}
 

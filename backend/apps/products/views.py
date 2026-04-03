@@ -99,12 +99,23 @@ class AddCartItemView(APIView):
         serializer.is_valid(raise_exception=True)
         cart, _ = Cart.objects.get_or_create(user=request.user)
         product = get_object_or_404(Product, id=serializer.validated_data["product_id"], is_active=True)
+        requested_qty = serializer.validated_data["quantity"]
+        if requested_qty < 1:
+            return Response({"detail": "Quantity must be at least 1."}, status=status.HTTP_400_BAD_REQUEST)
         cart_item, created = CartItem.objects.get_or_create(
-            cart=cart, product=product, defaults={"quantity": serializer.validated_data["quantity"]}
+            cart=cart, product=product, defaults={"quantity": requested_qty}
         )
         if not created:
-            cart_item.quantity += serializer.validated_data["quantity"]
+            new_total = cart_item.quantity + requested_qty
+            if new_total > product.stock:
+                return Response({"detail": "Requested quantity exceeds available stock."}, status=status.HTTP_400_BAD_REQUEST)
+            cart_item.quantity = new_total
             cart_item.save(update_fields=["quantity"])
+        else:
+            if requested_qty > product.stock:
+                # rollback newly created item to keep data consistent
+                cart_item.delete()
+                return Response({"detail": "Requested quantity exceeds available stock."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(CartItemSerializer(cart_item).data, status=status.HTTP_201_CREATED)
 
 
@@ -117,6 +128,8 @@ class CartItemDetailView(APIView):
         quantity = int(request.data.get("quantity", 1))
         if quantity < 1:
             return Response({"detail": "Quantity must be at least 1."}, status=status.HTTP_400_BAD_REQUEST)
+        if quantity > item.product.stock:
+            return Response({"detail": "Requested quantity exceeds available stock."}, status=status.HTTP_400_BAD_REQUEST)
         item.quantity = quantity
         item.save(update_fields=["quantity"])
         return Response(CartItemSerializer(item).data)
