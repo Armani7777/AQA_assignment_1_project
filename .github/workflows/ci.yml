@@ -51,15 +51,6 @@ jobs:
   api-tests:
     name: API E2E tests (pytest)
     runs-on: ubuntu-latest
-    services:
-      # optional: provide network for curl localhost
-      mysql:
-        image: alpine:3.18
-        options: >-
-          --health-cmd="exit 0"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
