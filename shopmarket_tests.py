@@ -438,17 +438,15 @@ class TestFailureScenarios:
             f"Expected error on double cancel, got {resp.status_code}"
 
     def test_TC_FAIL_04_register_duplicate_email(self):
-        """Registering with an already-used email must return 400"""
+        """Registering with an already-used username must return 400"""
         resp = requests.post(f"{BASE}/api/auth/register/", json={
+            "username": "buyer1",
             "email": "buyer1@test.com",
             "password": "Test123!",
-            "password2": "Test123!",
-            "first_name": "Duplicate",
-            "last_name": "User",
-            "role": "buyer"
+            "full_name": "Duplicate User"
         })
         assert resp.status_code == 400, \
-            f"Expected 400 for duplicate email, got {resp.status_code}"
+            f"Expected 400 for duplicate username, got {resp.status_code}"
 
     def test_TC_FAIL_05_access_other_user_order(self, buyer_token, buyer2_token):
         """User must not access another user's order"""
@@ -482,12 +480,14 @@ class TestE2EUserJourney:
     def test_TC_E2E_01_full_purchase_journey(self):
         """Complete happy-path: register → login → add to cart → order"""
         import time as t
-        email = f"e2e_test_{int(t.time())}@test.com"
+        ts = int(t.time())
+        username = f"e2e_test_{ts}"
+        email = f"{username}@test.com"
 
         # Step 1: Register
         reg = requests.post(f"{BASE}/api/auth/register/", json={
-            "email": email, "password": "Test123!", "password2": "Test123!",
-            "first_name": "E2E", "last_name": "User", "role": "buyer"
+            "username": username, "email": email,
+            "password": "Test123!", "full_name": "E2E User"
         })
         assert reg.status_code in [200, 201], f"Registration failed: {reg.status_code} {reg.text}"
 
@@ -520,13 +520,15 @@ class TestE2EUserJourney:
     def test_TC_E2E_02_purchase_with_coupon_journey(self):
         """Happy path with coupon: login → cart → SAVE25 → order"""
         import time as t
-        email = f"e2e_coupon_{int(t.time())}@test.com"
+        ts = int(t.time())
+        username = f"e2e_coupon_{ts}"
+        email = f"{username}@test.com"
 
         reg = requests.post(f"{BASE}/api/auth/register/", json={
-            "email": email, "password": "Test123!", "password2": "Test123!",
-            "first_name": "Coupon", "last_name": "User", "role": "buyer"
+            "username": username, "email": email,
+            "password": "Test123!", "full_name": "Coupon User"
         })
-        assert reg.status_code in [200, 201]
+        assert reg.status_code in [200, 201], f"Registration failed: {reg.status_code} {reg.text}"
 
         token = requests.post(f"{BASE}/api/auth/login/",
             json={"email": email, "password": "Test123!"}).json()["access"]

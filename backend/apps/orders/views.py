@@ -6,7 +6,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.products.models import Cart
+from apps.products.models import Cart, Product
 
 from .models import Coupon, Order, OrderItem
 from .serializers import (
@@ -52,14 +52,17 @@ class OrderListCreateView(generics.ListCreateAPIView):
         cart = get_object_or_404(Cart.objects.prefetch_related("items__product"), user=request.user)
         if not cart.items.exists():
             return Response({"detail": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
+        product_ids = [item.product_id for item in cart.items.all()]
+        locked_products = {p.id: p for p in Product.objects.select_for_update().filter(id__in=product_ids)}
         subtotal = Decimal("0.00")
         for item in cart.items.all():
-            if item.quantity > item.product.stock:
+            product = locked_products[item.product_id]
+            if item.quantity > product.stock:
                 return Response(
-                    {"detail": f"Not enough stock for {item.product.title}."},
+                    {"detail": f"Not enough stock for {product.title}."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            subtotal += item.product.price * item.quantity
+            subtotal += product.price * item.quantity
         discount = calculate_discount(subtotal, cart.applied_coupon)
         order = Order.objects.create(
             user=request.user,
@@ -69,9 +72,10 @@ class OrderListCreateView(generics.ListCreateAPIView):
             total_price=(subtotal - discount).quantize(Decimal("0.01")),
         )
         for item in cart.items.all():
-            OrderItem.objects.create(order=order, product=item.product, quantity=item.quantity, price=item.product.price)
-            item.product.stock -= item.quantity
-            item.product.save(update_fields=["stock"])
+            product = locked_products[item.product_id]
+            OrderItem.objects.create(order=order, product=product, quantity=item.quantity, price=product.price)
+            product.stock -= item.quantity
+            product.save(update_fields=["stock"])
         cart.items.all().delete()
         cart.applied_coupon = None
         cart.save(update_fields=["applied_coupon"])
@@ -89,10 +93,14 @@ class OrderDetailView(generics.RetrieveAPIView):
 class CancelOrderView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, pk):
         order = get_object_or_404(Order, id=pk, user=request.user)
         if order.status != "pending":
             return Response({"detail": "Only pending orders can be cancelled."}, status=status.HTTP_400_BAD_REQUEST)
+        for item in order.items.select_related("product"):
+            item.product.stock += item.quantity
+            item.product.save(update_fields=["stock"])
         order.status = "cancelled"
         order.save(update_fields=["status"])
         return Response({"detail": "Order cancelled."}, status=status.HTTP_200_OK)
