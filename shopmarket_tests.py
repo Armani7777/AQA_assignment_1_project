@@ -342,13 +342,11 @@ class TestConcurrency:
             f"Server returned 500 during concurrent cart adds: {status_codes}"
 
     def test_TC_CONC_02_simultaneous_order_placement(self, buyer_token, buyer2_token):
-        """Two users ordering the last unit simultaneously — only one should succeed if stock=1"""
+        """Two users ordering simultaneously — no 500 errors allowed"""
         products = requests.get(f"{BASE}/api/products/").json()["results"]
-        # Find a product with low stock or use first product
         product = products[0]
         product_id = product["id"]
 
-        # Setup both buyers with same item in cart
         for token in [buyer_token, buyer2_token]:
             clear_and_add_item(token, product_id, 1)
 
@@ -365,9 +363,11 @@ class TestConcurrency:
             futures = [executor.submit(place_order, t) for t in [buyer_token, buyer2_token]]
             concurrent.futures.wait(futures)
 
-        # At least one must succeed, no 500 errors
         assert 500 not in results, f"Server 500 on concurrent orders: {results}"
         assert 201 in results, f"No order succeeded in concurrent test: {results}"
+        for code in results:
+            assert code in [201, 400, 409], \
+                f"Unexpected status code in concurrent test: {code}"
 
     def test_TC_CONC_03_rapid_coupon_apply(self, buyer_token):
         """Rapid repeated coupon application must not double-discount"""
