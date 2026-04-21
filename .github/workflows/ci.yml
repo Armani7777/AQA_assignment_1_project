@@ -2,57 +2,110 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
 
 jobs:
-  backend:
-    name: Backend (Django)
+# =========================
+# 🔧 BACKEND TESTS (Django)
+# =========================
+  backend-tests:
+    name: Backend Tests (Django)
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: backend
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Django migrate + seed
-        run: |
-          python manage.py makemigrations users products orders reviews
-          python manage.py migrate
-          python manage.py seed
-      - name: Django system checks
+
+      - name: Django system check
         run: python manage.py check
 
-  frontend:
-    name: Frontend (React/Vite)
+      - name: Run migrations (safe check)
+        run: python manage.py migrate --check
+
+      - name: Run tests
+        run: pytest -q
+
+# =========================
+# 🎨 FRONTEND BUILD (Vite)
+# =========================
+  frontend-build:
+    name: Frontend Build (React/Vite)
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: frontend
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
       - name: Build
         run: npm run build
 
-  api-tests:
-    name: API E2E tests (pytest)
+# =========================
+# 🌐 API E2E TESTS
+# =========================
+  api-e2e:
+    name: API E2E Tests (pytest + live server)
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,49 +113,73 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
 
-      - name: Setup k6
-        uses: grafana/setup-k6-action@v1
-
-      - name: Install test deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          pip install pytest pytest-html requests mutmut
+          pip install pytest requests
 
-      - name: Migrate and seed
+      - name: Run migrations + seed
         working-directory: backend
         run: |
           python manage.py migrate
           python manage.py seed
 
-      - name: Start Django server
+      - name: Start Django (gunicorn)
         working-directory: backend
         run: |
-          nohup python manage.py runserver 0.0.0.0:8000 >/tmp/django.log 2>&1 &
-          for i in {1..30}; do
-            if curl -sSf http://127.0.0.1:8000/api/ >/dev/null; then
-              echo "API is up"; break
-            fi
-            sleep 2
-          done
+          pip install gunicorn
+          gunicorn config.wsgi:application --bind 127.0.0.1:8000 &
+          
+          timeout 60 bash -c \
+          'until curl -s http://127.0.0.1:8000/api/ > /dev/null; do sleep 2; done'
 
-      - name: Run pytest against live API
-        continue-on-error: true  # Сделает шаг зеленым, даже если есть ошибка 500
-        run: |
-          pytest shopmarket_tests.py -v
+      - name: Run API tests
+        working-directory: backend
+        run: pytest shopmarket_tests.py -v
 
-      - name: Run Mutation Tests
-        if: always()
-        continue-on-error: true  # Позволит пройти дальше к перформансу
-        run: |
-          echo "Starting mutation tests..."
-          python mutation_tests.py
+# =========================
+# 🧬 MUTATION TESTS
+# =========================
+  mutation-tests:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    needs: api-e2e
 
-      - name: Run Performance Tests
-        if: always()
-        continue-on-error: true  # Гарантирует общую зеленую галочку в конце
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
         run: |
-          echo "Starting performance tests..."
-          k6 run performance_test.js
+          pip install mutmut
+
+      - name: Run mutation tests
+        run: python mutation_tests.py
+
+# =========================
+# ⚡ PERFORMANCE TESTS (k6)
+# =========================
+  performance-tests:
+    name: Performance Tests (k6)
+    runs-on: ubuntu-latest
+    needs: api-e2e
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run performance tests
+        run: k6 run performance_test.js
