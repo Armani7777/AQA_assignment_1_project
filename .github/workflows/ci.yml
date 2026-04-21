@@ -62,7 +62,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Установка k6 (необходима для performance_test.js)
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
@@ -94,12 +93,13 @@ jobs:
           pytest shopmarket_tests.py -v
 
       - name: Run Mutation Tests
+        if: always()  # Запустится даже если pytest упал
         run: |
           echo "Starting mutation tests..."
           python mutation_tests.py
 
       - name: Run Performance Tests
+        if: always()  # Запустится даже если мутации или pytest упали
         run: |
           echo "Starting performance tests..."
-          # Используем k6 вместо node, чтобы избежать ошибки ERR_MODULE_NOT_FOUND
           k6 run performance_test.js
