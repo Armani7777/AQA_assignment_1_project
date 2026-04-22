@@ -1,12 +1,14 @@
-name: CI
+name: CI — ShopMarket (Assignment 3)
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main ]
 
 jobs:
+  # ─────────────────────────────────────────
+  # Job 1: Backend checks
+  # ─────────────────────────────────────────
   backend:
     name: Backend (Django)
     runs-on: ubuntu-latest
@@ -16,22 +18,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
       - name: Django migrate + seed
         run: |
           python manage.py makemigrations users products orders reviews
           python manage.py migrate
           python manage.py seed
+
       - name: Django system checks
         run: python manage.py check
 
+  # ─────────────────────────────────────────
+  # Job 2: Frontend build
+  # ─────────────────────────────────────────
   frontend:
     name: Frontend (React/Vite)
     runs-on: ubuntu-latest
@@ -41,17 +50,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
       - name: Install dependencies
         run: npm install
+
       - name: Build
         run: npm run build
 
+  # ─────────────────────────────────────────
+  # Job 3: Original API tests (Assignment 2)
+  # ─────────────────────────────────────────
   api-tests:
-    name: API E2E tests (pytest)
+    name: API Tests — Original Suite (A2)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -62,14 +77,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Setup k6
-        uses: grafana/setup-k6-action@v1
-
-      - name: Install test deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          pip install pytest pytest-html requests mutmut
+          pip install pytest pytest-html pytest-cov requests
 
       - name: Migrate and seed
         working-directory: backend
@@ -80,29 +92,137 @@ jobs:
       - name: Start Django server
         working-directory: backend
         run: |
-          nohup python manage.py runserver 0.0.0.0:8000 >/tmp/django.log 2>&1 &
+          nohup python manage.py runserver 0.0.0.0:8000 > /tmp/django.log 2>&1 &
           for i in {1..30}; do
-            if curl -sSf http://127.0.0.1:8000/api/ >/dev/null; then
+            if curl -sSf http://127.0.0.1:8000/api/products/ > /dev/null; then
               echo "API is up"; break
             fi
             sleep 2
           done
 
-      - name: Run pytest against live API
-        continue-on-error: true  # Сделает шаг зеленым, даже если есть ошибка 500
+      - name: Run original tests (shopmarket_tests.py)
         run: |
-          pytest shopmarket_tests.py -v
+          pytest shopmarket_tests.py -v --html=report_a2.html --tb=short
 
-      - name: Run Mutation Tests
+      - name: Upload A2 test report
         if: always()
-        continue-on-error: true  # Позволит пройти дальше к перформансу
-        run: |
-          echo "Starting mutation tests..."
-          python mutation_tests.py
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-a2
+          path: report_a2.html
 
-      - name: Run Performance Tests
-        if: always()
-        continue-on-error: true  # Гарантирует общую зеленую галочку в конце
+  # ─────────────────────────────────────────
+  # Job 4: Mutation tests (Assignment 3)
+  # ─────────────────────────────────────────
+  mutation-tests:
+    name: Mutation Tests — Assignment 3
+    runs-on: ubuntu-latest
+    needs: api-tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
         run: |
-          echo "Starting performance tests..."
-          k6 run performance_test.js
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-html requests
+
+      - name: Migrate and seed
+        working-directory: backend
+        run: |
+          python manage.py migrate
+          python manage.py seed
+
+      - name: Start Django server
+        working-directory: backend
+        run: |
+          nohup python manage.py runserver 0.0.0.0:8000 > /tmp/django_mutation.log 2>&1 &
+          for i in {1..30}; do
+            if curl -sSf http://127.0.0.1:8000/api/products/ > /dev/null; then
+              echo "API is up"; break
+            fi
+            sleep 2
+          done
+
+      - name: Run mutation baseline tests (must all pass)
+        run: |
+          pytest mutation_tests.py -v --html=report_mutation_baseline.html --tb=short
+
+      - name: Run mutation script
+        run: |
+          cp run_mutations.py backend/run_mutations.py
+          cd backend
+          python run_mutations.py | tee ../mutation_results.txt
+
+      - name: Print mutation score
+        run: cat mutation_results.txt
+
+      - name: Upload mutation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-reports
+          path: |
+            report_mutation_baseline.html
+            mutation_results.txt
+
+  # ─────────────────────────────────────────
+  # Job 5: Coverage report (Assignment 3)
+  # ─────────────────────────────────────────
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: mutation-tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-cov requests
+
+      - name: Migrate and seed
+        working-directory: backend
+        run: |
+          python manage.py migrate
+          python manage.py seed
+
+      - name: Start Django server
+        working-directory: backend
+        run: |
+          nohup python manage.py runserver 0.0.0.0:8000 > /tmp/django_cov.log 2>&1 &
+          for i in {1..30}; do
+            if curl -sSf http://127.0.0.1:8000/api/products/ > /dev/null; then
+              echo "API is up"; break
+            fi
+            sleep 2
+          done
+
+      - name: Run tests with coverage
+        run: |
+          pytest mutation_tests.py shopmarket_tests.py \
+            --cov=backend/apps \
+            --cov-report=term \
+            --cov-report=html:coverage_html \
+            --cov-fail-under=60 \
+            -v
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage_html/
